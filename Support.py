@@ -4,8 +4,27 @@ import os
 import torch
 import numpy as np
 import torchvision.utils as vutils
+import cv2
+import imageio
+from termcolor import colored
+
 
 device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
+
+
+def save_training_samples(inp, save_path="examples"):
+    # Reverse process before displaying
+    inp = inp.cpu().numpy() * 255.0
+    print("Input shape: {}".format(inp.shape))
+    for i, video in enumerate(inp.squeeze(1)[:3]):
+        path = os.path.join(save_path, "example_{}.gif".format(i))
+        imageio.mimsave(path, video.astype(np.uint8), "GIF", fps=5)
+        print("Saving example: {}".format(path))
+
+
+def save_checkpoint(state, save_path="checkpoints/dualMotionGAN_0000.pth.tar"):
+    print(colored("Saving checkpoints {}".format(save_path), color='green'))
+    torch.save(state, save_path)
 
 
 def showModelTraining(losses):
@@ -16,6 +35,15 @@ def showModelTraining(losses):
     plt.ylabel("Loss")
     plt.legend()
     plt.show()
+
+
+def warp_flow(img, flow):
+    h, w = flow.shape[:2]
+    flow = -flow
+    flow[:, :, 0] += np.arange(w)
+    flow[:, :, 1] += np.arange(h)[:, np.newaxis]
+    res = cv2.remap(img, flow, None, cv2.INTER_LINEAR)
+    return res
 
 
 def latestCheckpoint(path, mask="*.pth.tar"):

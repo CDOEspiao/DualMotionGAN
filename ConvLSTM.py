@@ -4,6 +4,7 @@ from ConvLSTMCell import ConvLSTMCell
 
 device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 
+
 class ConvLSTM(nn.Module):
     def __init__(self, in_channels, out_channels,
                  kernel_size, padding, activation, frame_size):
