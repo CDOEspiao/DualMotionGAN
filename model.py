@@ -1,36 +1,49 @@
 import torch
 import torch.nn as nn
-import torch.nn.functional as  F
+import numpy as np
 
-from Modules import *
+from Support import warp_flow
+import Modules
 
 
-class Seq2Seq(nn.Module):
-    def __init__(self, in_channels=1, features=[64, 128, 256], kernel_size=3, stride=1, padding=1, frame_size=(64, 64)):
-        super(Seq2Seq, self).__init__()
+class DualMotionGAN(nn.Module):
+    def __init__(self, in_channels=3, frame_size=(256, 256), device="cpu",
+                 me_cnn_features=(64, 128, 256, 512), me_lstm_features=(512, 512, 512),
+                 gframe_features=(512, 256, 128, 64), gflow_features=(512, 256, 128, 64)):
+        super(DualMotionGAN, self).__init__()
 
-        self.ProbabilisticMotionEncoderDown = ProbMotionEncoderDown(in_channels=in_channels, features=features,
-                                                            kernel_size=kernel_size, stride=stride, padding=padding,
-                                                            frame_size=frame_size)
+        self.device = device
+        self.MotionEncoderCNN = Modules.ProbMotionEncoderCNN(in_channels=in_channels, features=me_cnn_features,
+                                                             kernel_size=4, stride=2, padding=1,
+                                                             frame_size=frame_size, bias=False).to(device)
 
-        self.ProbabilisticMotionEncoderLSTM = ProbMotionEncoderLSTM(in_channels=in_channels, features=features,
-                                                                    kernel_size=kernel_size, stride=stride,
-                                                                    padding=padding,
-                                                                    frame_size=frame_size)
+        self.MotionEncoderLSTM = Modules.ProbMotionEncoderLSTM(in_channels=me_cnn_features[-1],
+                                                               features=me_lstm_features, kernel_size=3, padding=1,
+                                                               frame_size=(frame_size[0]//(2**(len(me_cnn_features))),
+                                                                           frame_size[1]//(2**(len(me_cnn_features))))
+                                                               ).to(device)
 
-        self.Generator = Generator(in_channels=256, out_channels=1, features=[256, 128, 64],
-                                   kernel_size=3, stride=2, padding=1)
+        self.FrameGenerator = Modules.Generator(in_channels=me_lstm_features[-1], out_channels=in_channels,
+                                                features=gframe_features, kernel_size=3, stride=2, padding=1).to(device)
 
-        self.FlowEstimator = FlowEstimator(in_channels=1, out_channels=2, features=[64, 128, 256],
-                                           kernel_size=3, stride=1, padding=1)
+        self.FlowGenerator = Modules.Generator(in_channels=me_lstm_features[-1], out_channels=2,
+                                               features=gflow_features, kernel_size=3, stride=2, padding=1).to(device)
 
-        self.FusingLayer = nn.Conv2d(in_channels=in_channels*2, out_channels=1, kernel_size=kernel_size,
-                                     stride=stride, padding=padding)
+        self.FusingLayer = nn.Conv2d(in_channels=2*in_channels, out_channels=in_channels, kernel_size=1, stride=1,
+                                     padding=0)
 
-    def forward(self, X):
-        y = self.ProbabilisticMotionEncoderLSTM(self.ProbabilisticMotionEncoderDown(X))
-        futureFrameGenerator = self.Generator(y, activation="sigmoid")                  # I..(t+1)
-        futureFlowGenerator = self.Generator(y, activation="tanh")                      # F_(t+1)
-        y_2 = F.grid_sample(input=y[-1], grid=futureFlowGenerator, mode='bilinear')     # I_(t+1)
-        result = nn.Sigmoid()(self.FusingLayer(torch.cat([futureFrameGenerator, y_2])))
-        return result
+    def forward(self, x):
+        out_me = self.MotionEncoderLSTM(self.MotionEncoderCNN(x))
+        frame_prediction = self.FrameGenerator(out_me, activation="sigmoid")
+        flow_prediction = self.FlowGenerator(out_me, activation="tanh")
+
+        flow2frame = torch.zeros((x.shape[0], x.shape[1], x.shape[3], x.shape[4]))
+        complex = torch.zeros((x.shape[0], x.shape[1]*2, x.shape[3], x.shape[4])).to(self.device)
+        for i in range(x.shape[0]):
+            prev = torch.squeeze(x[:, :, -1][i]).cpu().detach().numpy()
+            flow = np.transpose(flow_prediction[i].cpu().detach().numpy(), (1, 2, 0))
+            flow2frame[i] = torch.from_numpy(warp_flow(prev, flow))
+            complex[i] = torch.cat([frame_prediction[i], flow2frame[i].to(self.device)])
+
+        prediction = nn.Sigmoid()(self.FusingLayer(complex))
+        return frame_prediction, flow_prediction, prediction

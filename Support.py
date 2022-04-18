@@ -99,3 +99,43 @@ def createPredImage(batch, output):
             axarr[i, 10].title.set_text('Prediction')
 
     plt.show()
+
+
+def save_output(save_dir, epoch, inp, target, prediction, flow_prediction, frame_prediction):
+    batch_size, _, seq_len, height, width = inp.size()
+
+    for i, sequence in enumerate(inp):
+        # Prepare plot
+        fig, axarr = plt.subplots(1, seq_len // 2 + 4)
+        fig.set_size_inches(20, 7)
+        for video in sequence:
+            for j, frame in enumerate(video):
+                if j >= seq_len//2:
+                    axarr[j-seq_len//2].imshow(
+                        np.transpose(vutils.make_grid(frame.to('cpu')[:64], padding=2, normalize=True), (1, 2, 0)))
+                    axarr[j-seq_len//2].set_axis_off()
+                    axarr[j-seq_len//2].title.set_text('Input {}'.format(j))
+
+            axarr[j+1-seq_len//2].imshow(
+                np.transpose(vutils.make_grid(target[i].to('cpu')[:64], padding=2, normalize=True), (1, 2, 0)))
+            axarr[j+1-seq_len//2].set_axis_off()
+            axarr[j+1-seq_len//2].set_title('Target', color="green", fontweight='bold')
+
+            axarr[j+2-seq_len//2].imshow(
+                np.transpose(vutils.make_grid(frame_prediction[i].to('cpu')[:64], padding=2, normalize=True), (1, 2, 0)))
+            axarr[j+2-seq_len//2].set_axis_off()
+            axarr[j+2-seq_len//2].title.set_text('FramePred')
+
+            prev = np.array(torch.squeeze(inp[:, :, -1][i].cpu()))
+            flow = np.transpose(flow_prediction[i].cpu().detach().numpy(), (1, 2, 0))
+            frame = torch.from_numpy(warp_flow(prev, flow))
+            axarr[j+3-seq_len//2].imshow(
+                np.transpose(vutils.make_grid(frame.to('cpu')[:64], padding=2, normalize=True), (1, 2, 0)))
+            axarr[j+3-seq_len//2].set_axis_off()
+            axarr[j+3-seq_len//2].title.set_text('FlowWarp')
+
+            axarr[j+4-seq_len//2].imshow(
+                np.transpose(vutils.make_grid(prediction[i].to('cpu')[:64], padding=2, normalize=True), (1, 2, 0)))
+            axarr[j+4-seq_len//2].set_axis_off()
+            axarr[j+4-seq_len//2].set_title('Prediction', color="red", fontweight='bold')
+            plt.savefig(os.path.join(save_dir, "epoch_{}_{}.png".format(epoch, i)))
